@@ -2,6 +2,7 @@
 import sys
 import warnings
 from pathlib import Path
+from scipy.stats import beta
 
 import numpy as np
 import pandas as pd
@@ -50,6 +51,13 @@ def event_sums(codes, E, values):
     np.add.at(out, codes, values)
     return out
 
+def exact_interval(rate, n_eff, level=0.95):
+    """Clopper-Pearson interval, with each event counted as one trial (conservative: events <= markets)."""
+    a = (1 - level) / 2
+    k = int(round(rate * n_eff))
+    lo = 0.0 if k == 0 else float(beta.ppf(a, k, n_eff - k + 1))
+    hi = 1.0 if k == n_eff else float(beta.ppf(1 - a, k + 1, n_eff - k))
+    return lo, hi
 
 # ---------- calibration ----------
 def calibration_table(d, bins=BINS):
@@ -74,11 +82,16 @@ def calibration_table(d, bins=BINS):
         gap_lo, gap_hi = np.nanpercentile(gap_b, [2.5, 97.5], axis=0)
         avg_price, yes_rate = p / n, y / n
 
-    return pd.DataFrame({
+    out = pd.DataFrame({
         "bucket": labels.astype(str), "n": n.astype(int), "events": (N > 0).sum(0),
         "avg_price": avg_price, "yes_rate": yes_rate, "gap": yes_rate - avg_price,
         "rate_lo": rate_lo, "rate_hi": rate_hi, "gap_lo": gap_lo, "gap_hi": gap_hi,
     })
+
+    ex = [exact_interval(r, e) if e > 0 else (np.nan, np.nan)
+          for r, e in zip(out.yes_rate, out.events)]
+    out["exact_lo"], out["exact_hi"] = zip(*ex)
+    return out
 
 
 # ---------- Brier score ----------
