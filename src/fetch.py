@@ -95,7 +95,7 @@ def parse_market(m):
     return {
         "id": str(m["id"]),
         "question": m.get("question"),
-        "category": m.get("category"),
+        "gamma_category": m.get("category"),
         "event_id": events[0].get("id"),
         "created_time": created,
         "end_time": end_time,
@@ -185,6 +185,35 @@ def fetch_snapshots():
     for name in HORIZONS:
         print(f"\n{name} status counts:\n{snaps[f'status_{name}'].value_counts().to_string()}")
     print("\nSaved data/snapshots.parquet")
+
+# ---------- events (tags / category) ----------
+EVENTS = "https://gamma-api.polymarket.com/events"
+
+
+def fetch_events():
+    d = pd.read_parquet(DATA / "snapshots.parquet")
+    ids = sorted(d.event_id.dropna().astype(str).unique())
+    rows, failed = [], []
+    for eid in tqdm(ids, desc="events"):
+        try:
+            e = cached_json("events", f"{EVENTS}/{eid}", {})
+        except RuntimeError as err:
+            failed.append(eid)
+            tqdm.write(str(err)[:160])
+            continue
+        if isinstance(e, list):
+            e = e[0] if e else {}
+        tags = e.get("tags") or []
+        rows.append({
+            "event_id": eid,
+            "event_category": e.get("category"),
+            "tag_slugs": json.dumps([t["slug"] for t in tags if t.get("slug")]),
+            "tag_labels": json.dumps([t["label"] for t in tags if t.get("label")]),
+        })
+    out = pd.DataFrame(rows)
+    out.to_parquet(DATA / "events.parquet", index=False)
+    print(f"\nEvents saved: {len(out)} | failed: {len(failed)} {failed[:10]}")
+
 # ---------- CLI ----------
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -195,8 +224,11 @@ if __name__ == "__main__":
     pm.add_argument("--min-volume", type=float, default=5000)
     pm.add_argument("--per-window", type=int, default=150)
     sub.add_parser("snapshots")
+    sub.add_parser("events")
     a = ap.parse_args()
     if a.cmd == "markets":
         fetch_markets(a.start, a.end, a.min_volume, a.per_window)
-    else:
+    elif a.cmd == "snapshots":
         fetch_snapshots()
+    else:
+        fetch_events()
